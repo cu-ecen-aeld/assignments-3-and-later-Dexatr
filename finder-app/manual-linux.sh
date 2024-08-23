@@ -63,17 +63,12 @@ then
     git clone git://busybox.net/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
-    # Configure busybox
-    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} distclean || true
-    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} menuconfig || {
-        echo "BusyBox configuration failed."
-        exit 1
-    }
-    
+    # Configure busybox with default configuration
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
+
     # Enable bash in BusyBox configuration
-    # In the menuconfig interface, navigate to "Shells --->"
-    # Enable "bash-like shell" or "ash" by pressing "Y"
-    
+    sed -i 's/# CONFIG_BASH is not set/CONFIG_BASH=y/' .config
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} oldconfig
 else
     cd busybox
 fi
