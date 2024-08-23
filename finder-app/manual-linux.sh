@@ -65,10 +65,15 @@ then
     git checkout ${BUSYBOX_VERSION}
     # Configure busybox
     make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} distclean || true
-    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig || {
+    make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} menuconfig || {
         echo "BusyBox configuration failed."
         exit 1
     }
+    
+    # Enable bash in BusyBox configuration
+    # In the menuconfig interface, navigate to "Shells --->"
+    # Enable "bash-like shell" or "ash" by pressing "Y"
+    
 else
     cd busybox
 fi
