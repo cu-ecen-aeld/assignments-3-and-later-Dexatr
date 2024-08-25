@@ -1,0 +1,23 @@
+#!/bin/sh
+
+SERVER_PATH=/usr/bin/aesdsocket
+DAEMON_OPTS="-d"
+DESC="AESD Socket Server"
+NAME=aesdsocket
+
+case "$1" in
+    start)
+        echo "Starting $DESC: $SERVER_PATH"
+        start-stop-daemon --start --quiet --exec $SERVER_PATH -- $DAEMON_OPTS
+        ;;
+    stop)
+        echo "Stopping $DESC: $SERVER_PATH"
+        start-stop-daemon --stop --quiet --name $NAME
+        ;;
+    *)
+        echo "Usage: $0 {start|stop}"
+        exit 1
+        ;;
+esac
+
+exit 0

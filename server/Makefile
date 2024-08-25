@@ -1,21 +1,19 @@
+# Variables
+TARGET = aesdsocket
+CC = $(CROSS_COMPILE)gcc
+CFLAGS = -Wall -Wextra -Werror
+LDFLAGS = -lpthread
+
 # Default target
-all: aesdsocket
+all: $(TARGET)
 
-# Compiler and linker commands for native build
-CC = gcc
-CFLAGS = -Wall -Werror
-LIBS = -lpthread
+# Compile the target
+$(TARGET): $(TARGET).c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Override for cross-compilation
-ifeq ($(CROSS_COMPILE),1)
-	CROSS_COMPILE_PREFIX ?= aarch64-none-linux-gnu-
-	CC = $(CROSS_COMPILE_PREFIX)gcc
-endif
-
-# Target executable
-aesdsocket: aesdsocket.c
-	$(CC) $(CFLAGS) -o aesdsocket aesdsocket.c $(LIBS)
-
-# Clean command
+# Clean target
 clean:
-	rm -f aesdsocket
+	rm -f $(TARGET)
+
+# Phony targets
+.PHONY: all clean
