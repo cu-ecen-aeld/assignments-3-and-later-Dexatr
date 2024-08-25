@@ -11,6 +11,9 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <pthread.h>
+#include <time.h>
+#include <sys/queue.h>
 
 #define PORT 9000
 #define BACKLOG 10
@@ -18,51 +21,67 @@
 #define FILE_PATH "/var/tmp/aesdsocketdata"
 
 int server_socket = -1;
-int client_socket = -1;
-FILE *file = NULL;
+pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+volatile sig_atomic_t exit_flag = 0;
+
+typedef struct {
+    int client_socket;
+    struct sockaddr_in client_addr;
+} thread_args_t;
+
+typedef struct thread_node {
+    pthread_t thread;
+    SLIST_ENTRY(thread_node) entries;
+} thread_node_t;
+
+SLIST_HEAD(thread_list, thread_node) head = SLIST_HEAD_INITIALIZER(head);
+
+void print_file_to_stdout(const char *file_path) {
+    FILE *file = fopen(file_path, "r");
+    if (file == NULL) {
+        perror("Failed to open file");
+        return;
+    }
+
+    char buffer[BUFFER_SIZE];
+    size_t bytes;
+
+    while ((bytes = fread(buffer, 1, BUFFER_SIZE, file)) > 0) {
+        fwrite(buffer, 1, bytes, stdout);
+    }
+
+    fclose(file);
+}
 
 void run_as_daemon() {
     pid_t pid, sid;
 
-    // Fork the parent process
     pid = fork();
-
-    // If fork() returns a negative value, creation of child process was unsuccessful
     if (pid < 0) {
         exit(EXIT_FAILURE);
     }
-
-    // If fork() returns a positive value, we are in the parent process
     if (pid > 0) {
         exit(EXIT_SUCCESS);
     }
 
-    // Change the file mode mask
     umask(0);
-
-    // Create a new SID for the child process
     sid = setsid();
     if (sid < 0) {
         exit(EXIT_FAILURE);
     }
-
-    // Change the current working directory
     if ((chdir("/")) < 0) {
         exit(EXIT_FAILURE);
     }
 
-    // Close out the standard file descriptors
     close(STDIN_FILENO);
     close(STDOUT_FILENO);
     close(STDERR_FILENO);
 
-    // Open log file
     int log_fd = open("/dev/null", O_RDWR);
     if (log_fd == -1) {
         exit(EXIT_FAILURE);
     }
 
-    // Redirect standard file descriptors to /dev/null
     dup2(log_fd, STDIN_FILENO);
     dup2(log_fd, STDOUT_FILENO);
     dup2(log_fd, STDERR_FILENO);
@@ -70,18 +89,8 @@ void run_as_daemon() {
 
 void handle_signal(int signal) {
     syslog(LOG_INFO, "Caught signal %d, exiting", signal);
-    if (client_socket != -1) {
-        close(client_socket);
-    }
-    if (server_socket != -1) {
-        close(server_socket);
-    }
-    if (file != NULL) {
-        fclose(file);
-        remove(FILE_PATH);
-    }
-    closelog();
-    exit(0);
+    exit_flag = 1;
+    close(server_socket);
 }
 
 void setup_signal_handlers() {
@@ -100,20 +109,85 @@ void setup_signal_handlers() {
     }
 }
 
-int main(int argc, char *argv[]) {
+void* handle_client(void* arg) {
+    thread_args_t* args = (thread_args_t*)arg;
+    int client_socket = args->client_socket;
+    struct sockaddr_in client_addr = args->client_addr;
+    free(arg);
 
-    // Run as daemon
+    char buffer[BUFFER_SIZE];
+    ssize_t bytes_received;
+
+    syslog(LOG_INFO, "Accepted connection from %s and socket_id:%d", inet_ntoa(client_addr.sin_addr), client_socket);
+    
+    while ((bytes_received = recv(client_socket, buffer, BUFFER_SIZE - 1, 0)) > 0) {
+        buffer[bytes_received] = '\0';
+
+        pthread_mutex_lock(&file_mutex);
+        FILE* file = fopen(FILE_PATH, "a+");
+        if (file == NULL) {
+            syslog(LOG_ERR, "Failed to open file: %s", strerror(errno));
+            pthread_mutex_unlock(&file_mutex);
+            close(client_socket);
+            return NULL;
+        }
+
+        fprintf(file, "%s", buffer);
+        fflush(file);
+
+        if (strchr(buffer, '\n') != NULL) {
+            fseek(file, 0, SEEK_SET);
+            while (fgets(buffer, BUFFER_SIZE, file) != NULL) {
+                send(client_socket, buffer, strlen(buffer), 0);
+            }
+        }
+
+        fclose(file);
+        pthread_mutex_unlock(&file_mutex);
+    }
+
+    if (bytes_received == -1) {
+        syslog(LOG_ERR, "Failed to receive data: %s", strerror(errno));
+    }
+
+    syslog(LOG_INFO, "Closed connection from %s and socket_id:%d", inet_ntoa(client_addr.sin_addr), client_socket);
+
+    close(client_socket);
+    return NULL;
+}
+
+void* append_timestamps() {
+    while (!exit_flag) {
+        sleep(10);
+
+        time_t now = time(NULL);
+        struct tm* tm_info = localtime(&now);
+        char timestamp[64];
+        strftime(timestamp, sizeof(timestamp), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", tm_info);
+
+        pthread_mutex_lock(&file_mutex);
+        FILE* file = fopen(FILE_PATH, "a");
+        if (file != NULL) {
+            fprintf(file, "%s", timestamp);
+            fflush(file);
+            fclose(file);
+        }
+        pthread_mutex_unlock(&file_mutex);
+    }
+    return NULL;
+}
+
+int main(int argc, char *argv[]) {
     if (argc > 1 && strcmp(argv[1], "-d") == 0) {
         run_as_daemon();
     }
 
-    // Remove file if exist
+    syslog(LOG_ERR, "------------ SERVER STARTING -----------------");
     remove(FILE_PATH);
 
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_addr_len = sizeof(client_addr);
-    char buffer[BUFFER_SIZE];
-    ssize_t bytes_received;
+    pthread_t timestamp_thread;
 
     openlog("aesdsocket", LOG_PID, LOG_USER);
     setup_signal_handlers();
@@ -141,46 +215,60 @@ int main(int argc, char *argv[]) {
         return -1;
     }
 
-    while (1) {
-        client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
+    if (pthread_create(&timestamp_thread, NULL, append_timestamps, NULL) != 0) {
+        syslog(LOG_ERR, "Failed to create timestamp thread: %s", strerror(errno));
+        close(server_socket);
+        return -1;
+    }
+
+    while (!exit_flag) {
+        int client_socket = accept(server_socket, (struct sockaddr *)&client_addr, &client_addr_len);
         if (client_socket == -1) {
+            if (exit_flag) break;
             syslog(LOG_ERR, "Failed to accept connection: %s", strerror(errno));
             continue;
         }
 
-        syslog(LOG_INFO, "Accepted connection from %s", inet_ntoa(client_addr.sin_addr));
-
-        file = fopen(FILE_PATH, "a+");
-        if (file == NULL) {
-            syslog(LOG_ERR, "Failed to open file: %s", strerror(errno));
+        thread_args_t* args = malloc(sizeof(thread_args_t));
+        if (args == NULL) {
+            syslog(LOG_ERR, "Failed to allocate memory for thread args: %s", strerror(errno));
             close(client_socket);
             continue;
         }
+        args->client_socket = client_socket;
+        args->client_addr = client_addr;
 
-        while ((bytes_received = recv(client_socket, buffer, BUFFER_SIZE - 1, 0)) > 0) {
-            buffer[bytes_received] = '\0';
-            fprintf(file, "%s", buffer);
-            fflush(file);
-
-            if (strchr(buffer, '\n') != NULL) {
-                fseek(file, 0, SEEK_SET);
-                while (fgets(buffer, BUFFER_SIZE, file) != NULL) {
-                    send(client_socket, buffer, strlen(buffer), 0);
-                }
-                fseek(file, 0, SEEK_END);
-            }
+        thread_node_t* new_node = malloc(sizeof(thread_node_t));
+        if (new_node == NULL) {
+            syslog(LOG_ERR, "Failed to allocate memory for thread node: %s", strerror(errno));
+            close(client_socket);
+            free(args);
+            continue;
         }
 
-        if (bytes_received == -1) {
-            syslog(LOG_ERR, "Failed to receive data: %s", strerror(errno));
+        if (pthread_create(&new_node->thread, NULL, handle_client, args) != 0) {
+            syslog(LOG_ERR, "Failed to create client thread: %s", strerror(errno));
+            close(client_socket);
+            free(args);
+            free(new_node);
+            continue;
         }
 
-        syslog(LOG_INFO, "Closed connection from %s", inet_ntoa(client_addr.sin_addr));
-        fclose(file);
-        file = NULL;
-        close(client_socket);
-        client_socket = -1;
+        SLIST_INSERT_HEAD(&head, new_node, entries);
+
     }
 
+    pthread_join(timestamp_thread, NULL);
+
+    thread_node_t* node;
+    while (!SLIST_EMPTY(&head)) {
+        node = SLIST_FIRST(&head);
+        pthread_join(node->thread, NULL);
+        SLIST_REMOVE_HEAD(&head, entries);
+        free(node);
+    }
+
+    close(server_socket);
+    closelog();
     return 0;
 }
