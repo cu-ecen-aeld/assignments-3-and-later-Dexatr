@@ -27,7 +27,6 @@
 static char is_exit = 0;
 static const size_t buf_size = 256;
 static const char file_path[] = DATA_FILE;
-//static int file_descriptor;
 int s_id;
 
 static pthread_mutex_t file_mutex;
@@ -43,8 +42,9 @@ struct connect_item
 
 static void signal_handler(int signo)
 {
+    (void)signo;  // Suppress unused parameter warning
     syslog(LOG_INFO, "Ready to exit signal.");
-    is_exit=1;
+    is_exit = 1;
 }
 
 void* active_connection(void *element)
@@ -62,7 +62,6 @@ void* active_connection(void *element)
     {
         char buf[buf_size]; 
 
-
         int recv_len = recv(item->cfd, buf, sizeof(buf), 0);
         if (recv_len <= 0) 
         {
@@ -76,9 +75,9 @@ void* active_connection(void *element)
             data_received = 1;
         }
 
-        int i=0;
+        int i = 0;
         int end = 0;
-        for (i=0; i < recv_len; i++) {
+        for (i = 0; i < recv_len; i++) {
             if (buf[i] == '\n') {
                 i += 1;
                 end = 1;
@@ -86,7 +85,6 @@ void* active_connection(void *element)
             }
         }
         syslog(LOG_INFO, "Buffer: %s", buf);
-
 
         int ret = sscanf(buf, "AESDCHAR_IOCSEEKTO:%u,%u\n", &write_cmd, &write_cmd_offset);
         if (ret == 2)
@@ -101,8 +99,7 @@ void* active_connection(void *element)
             pthread_mutex_unlock(&file_mutex);
         }
         
-        
-        if (end==1) {
+        if (end == 1) {
             pthread_mutex_lock(&file_mutex);
             int rfd = open(file_path, O_RDONLY, 0);
             if (ret == 2)
@@ -118,37 +115,22 @@ void* active_connection(void *element)
             }
             close(rfd);
         }
-        
     }
 
     close(file_descriptor);
-
     item->completed = 1;
     return NULL;
 }
 
+static void alarm_handler(union sigval sigval) __attribute__((unused));
 static void alarm_handler(union sigval sigval)
 {
-	/*char outstr[200];
-
-	time_t t = time(NULL);
-	struct tm *tmp = localtime(&t);
-	strftime(outstr, sizeof(outstr), "%a, %d %b %Y %T %z", tmp);
-
-	pthread_mutex_lock(&file_mutex);
-	write(file_descriptor, "timestamp:", strlen("timestamp:"));
-	write(file_descriptor, outstr, strlen(outstr));
-	write(file_descriptor, "\n", strlen("\n"));
-	pthread_mutex_unlock(&file_mutex);*/
-    
+    (void)sigval;  // Suppress unused parameter warning
+    // Add your logic here if needed in the future
 }
 
 int main(int argc, char** argv)
 {
-    //timer_t timerid;
-    struct sigevent sev;
-    //struct itimerspec its;
-
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
     action.sa_handler = signal_handler;
@@ -159,7 +141,7 @@ int main(int argc, char** argv)
 
     openlog(NULL, 0, LOG_USER);
 
-    struct connect_item *head=NULL, *last=NULL;
+    struct connect_item *head = NULL, *last = NULL;
 
     struct addrinfo hints;
     memset(&hints, 0, sizeof(hints));
@@ -191,7 +173,7 @@ int main(int argc, char** argv)
         exit(EXIT_FAILURE);
     }
     int bind_res = bind(s_id, result->ai_addr, result->ai_addrlen);
-    if (bind_res==-1)
+    if (bind_res == -1)
     {
         fprintf(stderr, "Error in binding.\n");
         close(s_id);
@@ -200,20 +182,20 @@ int main(int argc, char** argv)
 
     freeaddrinfo(result);
 
-    if ((argc > 1) && (strcmp(argv[1],"-d") == 0)) 
+    if ((argc > 1) && (strcmp(argv[1], "-d") == 0)) 
     {
         int pid = fork();
-        if (pid!=0)
+        if (pid != 0)
         {
             exit(EXIT_SUCCESS);
         }
     }
 
-    if (listen(s_id, 1)==-1)
+    if (listen(s_id, 1) == -1)
     {
-            fprintf(stderr, "Error in listening.\n");
-            close(s_id);
-            exit(EXIT_FAILURE);
+        fprintf(stderr, "Error in listening.\n");
+        close(s_id);
+        exit(EXIT_FAILURE);
     }
 
     printf("Listening\n");
@@ -221,39 +203,11 @@ int main(int argc, char** argv)
     pthread_mutex_init(&queue_mutex, NULL);
     pthread_mutex_init(&file_mutex, NULL);
 
-    //file_descriptor = open(file_path, O_WRONLY|O_CREAT|O_TRUNC, S_IRWXU  | S_IRGRP | S_IROTH);
-
-    /*int clock_id = CLOCK_MONOTONIC;
-    memset(&sev, 0, sizeof(struct sigevent));
-    
-    sev.sigev_notify = SIGEV_THREAD;
-    sev.sigev_value.sival_ptr = &timerid;
-    sev.sigev_notify_function = alarm_handler;
-    sev.sigev_notify_attributes = NULL;
-    if (timer_create(clock_id, &sev, &timerid) == -1)
-    {
-        printf("create timer failed\n");
-        timer_delete(timerid);
-        return -1;
-    }
-
-    its.it_value.tv_sec = 10;
-    its.it_value.tv_nsec = 0;
-    its.it_interval.tv_sec = its.it_value.tv_sec;
-    its.it_interval.tv_nsec = its.it_value.tv_nsec;
-
-    if (timer_settime(timerid, 0, &its, NULL) == -1)
-    {
-        printf("set timer failed\n");
-        timer_delete(timerid);
-        return -1;
-    }*/
-
-    while(is_exit==0) 
+    while(is_exit == 0) 
     {
         peer_addr_size = sizeof(peer_addr);
         int cfd = accept(s_id, (struct sockaddr*)&peer_addr, &peer_addr_size);
-        if (cfd==-1)
+        if (cfd == -1)
         {
             fprintf(stderr, "Error in accepting.\n");
             break;
@@ -262,7 +216,7 @@ int main(int argc, char** argv)
         inet_ntop(AF_INET, &peer_addr.sin_addr, addrs, INET_ADDRSTRLEN);
         syslog(LOG_INFO, "Accepted connection from %s", addrs);
 
-        if (head==NULL)
+        if (head == NULL)
         {
             head = malloc(sizeof(struct connect_item));
             last = head;
@@ -277,54 +231,51 @@ int main(int argc, char** argv)
         last->cfd = cfd;
         last->next = NULL;
         if (pthread_create(&(last->thread), NULL, &active_connection, last) != 0)
-		{
-			perror("pthread_create");
-			exit(EXIT_FAILURE);
-		}
+        {
+            perror("pthread_create");
+            exit(EXIT_FAILURE);
+        }
         syslog(LOG_INFO, "Thread %d has been created", (int)(last->thread));
 
-        struct connect_item *plist_elem=head;
-		while (plist_elem!=NULL)
-		{
-			if(plist_elem->completed==1)
-			{
+        struct connect_item *plist_elem = head;
+        while (plist_elem != NULL)
+        {
+            if(plist_elem->completed == 1)
+            {
                 syslog(LOG_INFO, "Joining thread %d", (int)(plist_elem->thread));
-				pthread_join(plist_elem->thread, NULL);
-                plist_elem->completed=-1;
+                pthread_join(plist_elem->thread, NULL);
+                plist_elem->completed = -1;
                 close(plist_elem->cfd);
-				syslog(LOG_INFO, "Thread %d has been completed", (int)(plist_elem->thread));
-			}
+                syslog(LOG_INFO, "Thread %d has been completed", (int)(plist_elem->thread));
+            }
             plist_elem = plist_elem->next;
-		}
+        }
     }
 
     syslog(LOG_INFO, "Exiting block");
-    struct connect_item *plist_elem_c=head, *tmp_el;
+    struct connect_item *plist_elem_c = head, *tmp_el;
     pthread_mutex_lock(&queue_mutex);
-	while (plist_elem_c!=NULL)
-	{
-		if (plist_elem_c->completed!=-1)
+    while (plist_elem_c != NULL)
+    {
+        if (plist_elem_c->completed != -1)
         {
             syslog(LOG_INFO, "Joining thread %d", (int)(plist_elem_c->thread));
             pthread_join(plist_elem_c->thread, NULL);
-		    close(plist_elem_c->cfd);
+            close(plist_elem_c->cfd);
             syslog(LOG_INFO, "Thread %d has been completed", (int)(plist_elem_c->thread));
         }
-        tmp_el=plist_elem_c;
-        plist_elem_c=plist_elem_c->next;
+        tmp_el = plist_elem_c;
+        plist_elem_c = plist_elem_c->next;
         syslog(LOG_INFO, "Element for thread %d has been deleted", (int)(tmp_el->thread));
-		free(tmp_el);
-	}
+        free(tmp_el);
+    }
     pthread_mutex_unlock(&queue_mutex);
 
     syslog(LOG_INFO, "Caught signal, exiting");
     closelog();
-    //timer_delete(timerid);
-    //close(file_descriptor);
     pthread_mutex_destroy(&file_mutex);
     pthread_mutex_destroy(&queue_mutex);
     close(s_id);
-    //unlink(file_path);
 
     return 0;
 }
